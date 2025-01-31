@@ -1,3 +1,4 @@
-# remote-control service
+# service-template-go
 
-A service designed to support controller input for the rover
+This is best used in combination with roverctl.
+wip, docs soon.

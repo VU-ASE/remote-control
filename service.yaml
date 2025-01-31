@@ -1,0 +1,24 @@
+name: controller
+author: niels
+source: github.com/VU-ASE/remote-control
+version: 0.0.1
+description: A template service in Go
+
+commands:
+  build: make build
+  run: ./bin/remote-control
+
+inputs: []
+
+outputs:
+  - decision
+
+configuration:
+  - name: controller-address
+    type: string
+    value: "58:10:31:A1:57:3C"
+
+
+# 00:24:F3:E5:AA:48 wii controller
+# 58:10:31:A1:57:3C ps5
+# 00:A4:1C:C8:FC:2E JCL
