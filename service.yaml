@@ -1,8 +1,8 @@
 name: controller
-author: niels
+author: vu-ase
 source: github.com/VU-ASE/remote-control
-version: 0.0.1
-description: A template service in Go
+version: 1.0.0
+description: controller input functionality to control the rover 
 
 commands:
   build: make build
@@ -16,9 +16,11 @@ outputs:
 configuration:
   - name: controller-address
     type: string
-    value: "58:10:31:A1:57:3C"
+    value: "58:10:31:A1:57:3C" 
+  - name: controller-type
+    type: string
+    value: "ps5"
+  - name: max-speed
+    type: number
+    value: 0.3
 
-
-# 00:24:F3:E5:AA:48 wii controller
-# 58:10:31:A1:57:3C ps5
-# 00:A4:1C:C8:FC:2E JCL

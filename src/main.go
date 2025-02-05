@@ -14,32 +14,44 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-var addr string
+var controllerAddress string
 
 
 func run(service roverlib.Service, configuration *roverlib.ServiceConfiguration) error {
-	if configuration == nil {
+	if(configuration == nil){
 		return fmt.Errorf("configuration cannot be accessed")
 	}
 	
 	
 	actuatorOutput := service.GetWriteStream("decision")
 	
-	addr, err := configuration.GetStringSafe("controller-address")
-	if err != nil {
+	controllerAddress, err := configuration.GetStringSafe("controller-address")
+	if(err != nil){
 		return err
 	}
-	exec.Command("bluetoothctl", "trust", addr)
+
+	controllerType, err := configuration.GetStringSafe("controller-type")
+	if(err != nil){
+		return err
+	}
+
+	maxSpeed, err := configuration.GetFloatSafe("max-speed")
+	if(err != nil){
+		return err
+	}
+
+	// prematurely trust the given mac-address, to ensure no problems while pairing
+	exec.Command("bluetoothctl", "trust", controllerAddress)
 	time.Sleep(2 * time.Second)
 
+	// start scanning for devices
 	exec.Command("bluetoothctl", "scan", "on")
-
 	exec.Command("bluetoothctl", "power", "on")
 	exec.Command("bluetoothctl", "agent", "on")
 	exec.Command("bluetoothctl", "default-agent")
 	
-
-	pairCmd := exec.Command("bluetoothctl", "pair", addr)
+	// pair to the device, wait before connecting to ensure successful pairing
+	pairCmd := exec.Command("bluetoothctl", "pair", controllerAddress)
 	if output, err := pairCmd.CombinedOutput(); err != nil {
 		log.Info().Msgf("Failed to pair device: %s\nOutput: %s\n", err, string(output))
 	} else {
@@ -48,7 +60,7 @@ func run(service roverlib.Service, configuration *roverlib.ServiceConfiguration)
 	time.Sleep(2 * time.Second)
 
 	log.Info().Msgf("Connecting to the device...")
-	connectCmd := exec.Command("bluetoothctl", "connect", addr)
+	connectCmd := exec.Command("bluetoothctl", "connect", controllerAddress)
 	if output, err := connectCmd.CombinedOutput(); err != nil {
 		log.Info().Msgf("Failed to connect to device: %s\nOutput: %s\n", err, string(output))
 		return err
@@ -56,8 +68,9 @@ func run(service roverlib.Service, configuration *roverlib.ServiceConfiguration)
 		log.Info().Msgf("Connection output: %s\n", string(output))
 	}
 
-
+	// sleep to ensure device is connected before accessing it
 	time.Sleep(2 * time.Second)
+
 
 	devices, err := evdev.ListInputDevices("/dev/input/event*")
 	if err != nil {
@@ -66,56 +79,41 @@ func run(service roverlib.Service, configuration *roverlib.ServiceConfiguration)
 
 	acc := 0
 	vel := 0.0
-	cc := false
+	cruiseControl := false
 	stop := false
 	steer := 0.0
 
+	// these store the codes that the evdev library binds to the used buttons
+	// stored in a var for easy scalability when adding additional controller support
 	var codeForward uint16
 	var codeBackward uint16
 	var codeCC uint16 //cruise-control
 	var codeEB uint16 //emergency-brake
 	var codeSteer uint16
+	var bluetoothName string
 
 	var controller *evdev.InputDevice
 
-	// Find the controller
+	if(controllerType == "ps5"){
+		codeForward = 313
+		codeBackward = 312
+		codeCC = 307
+		codeEB = 304
+		codeSteer = 0
+		bluetoothName = "dualsense"
+
+	} else{
+		log.Fatal().Msgf("Unknown controller type or not supported: %s", controllerType)
+		return err
+	}
+
+
+	// find the controller, which should be connected now
 	for _, dev := range devices {
-		if strings.Contains(strings.ToLower(dev.Name), "dualsense") {
+		if strings.Contains(strings.ToLower(dev.Name), bluetoothName) {
 			controller = dev
-			log.Info().Msgf("PlayStation 5 controller detected")
-
-			codeForward = 313
-			codeBackward = 312
-			codeCC = 307
-			codeEB = 304
-			codeSteer = 0
-
 			break
-		} else if strings.Contains(strings.ToLower(dev.Name), "joy-con (l)") {
-			controller = dev
-			log.Info().Msgf("Left Joy-Con controller detected")
-			
-			// NOT IMPLEMENTED
-			// codeForward =
-			// codeBackward =
-			// codeCC =
-			// codeEB =
-			// codeSteer =
-
-			break
-		} else if strings.Contains(strings.ToLower(dev.Name), "rvl-cnt") {
-			controller = dev
-			log.Info().Msgf("Wii Remote controller detected")
-			
-			// NOT IMPLEMENTED
-			// codeForward =
-			// codeBackward =
-			// codeCC =
-			// codeEB =
-			// codeSteer =
-
-			break
-		}
+		} 
 	}
 
 	if controller == nil {
@@ -165,14 +163,14 @@ func run(service roverlib.Service, configuration *roverlib.ServiceConfiguration)
 
 						case codeCC: // cruise-control
 							if ev.Value == 1 {
-								cc = !cc
-								log.Info().Msgf("CC toggled to: %t", cc)
+								cruiseControl = !cruiseControl
+								log.Info().Msgf("CC toggled to: %t", cruiseControl)
 							}
 							
-						case codeEB: // em-brake
+						case codeEB: // emergency-brake
 							stop = ev.Value == 1
 							log.Info().Msgf("EMBRAKE: %t", stop)
-							cc = false
+							cruiseControl = false
 					}
 				case evdev.EV_ABS: // Axis movement
 					if ev.Code == codeSteer {
@@ -193,33 +191,26 @@ func run(service roverlib.Service, configuration *roverlib.ServiceConfiguration)
 	for range ticker.C{
 
 		//don't update vel if cruise-control is on
-		if !cc {
+		if(stop){
+			vel = 0.0
+		} else if !cruiseControl {
 			vel += float64(acc) / 100
-			
 			//when no acceleration is present (forward or backward), velocity starts approaching 0. 
 			if(acc == 0){
 				vel *= 0.6
-				
-				// stop endless approaching of 0
-				if(vel < 0.01 && vel > 0.01){
-					vel = 0
-				}
-			}
-			
-			// max speed
-			if(vel < -0.3){
-				vel = -0.3
-			} else if(vel > 0.3){
-				vel = 0.3
-			}
+			}			
 		}
-
-		if(stop){
-			vel = 0.0
+		
+		// stop endless approaching of 0
+		if(vel < 0.01 && vel > 0.01){
+			vel = 0
+		} else if(vel < -maxSpeed){
+			vel = -maxSpeed
+		} else if(vel > maxSpeed){
+			vel = maxSpeed
 		}
-
+		
 		log.Info().Msgf("SPEED: %f. STEER: %f.", vel, steer)
-
 
 		err = actuatorOutput.Write(
 			&pb_outputs.SensorOutput{
@@ -235,13 +226,11 @@ func run(service roverlib.Service, configuration *roverlib.ServiceConfiguration)
 				},
 			},
 		)
-
 		// Send it for the actuator (and others) to use
 		if err != nil {
 			log.Err(err).Msg("Failed to send controller output")
 			continue
 		}
-
 	}
 
 	return err
@@ -252,9 +241,7 @@ func run(service roverlib.Service, configuration *roverlib.ServiceConfiguration)
 // This function gets called when roverd wants to terminate the service
 func onTerminate(sig os.Signal) error {
 	log.Info().Str("signal", sig.String()).Msg("Terminating service")
-
-	exec.Command("bluetoothctl", "disconnect", addr)
-	
+	exec.Command("bluetoothctl", "disconnect", controllerAddress)
 	return nil
 }
 
