@@ -16,15 +16,36 @@ import (
 
 var controllerAddress string
 
+type Controller struct{
+	codeForward int
+	codeBackward int
+	codeCC int
+	codeEB int
+	codeSteer int
+	controllerCode string
+	bluetoothName string
+	name string
+}
+
+var supportedControllers = []Controller{
+	{313, 312, 307, 304, 0, "ps5", "dualsense", "Playstation 5"}, 
+	
+	// Add any other controllers...
+
+} 
+
+
 
 func run(service roverlib.Service, configuration *roverlib.ServiceConfiguration) error {
+
 	if(configuration == nil){
+		log.Error().Msgf("no config")
 		return fmt.Errorf("configuration cannot be accessed")
 	}
-	
+
 	
 	actuatorOutput := service.GetWriteStream("decision")
-	
+
 	controllerAddress, err := configuration.GetStringSafe("controller-address")
 	if(err != nil){
 		return err
@@ -39,16 +60,41 @@ func run(service roverlib.Service, configuration *roverlib.ServiceConfiguration)
 	if(err != nil){
 		return err
 	}
-
 	// prematurely trust the given mac-address, to ensure no problems while pairing
 	exec.Command("bluetoothctl", "trust", controllerAddress)
 	time.Sleep(2 * time.Second)
 
 	// start scanning for devices
-	exec.Command("bluetoothctl", "scan", "on")
-	exec.Command("bluetoothctl", "power", "on")
-	exec.Command("bluetoothctl", "agent", "on")
-	exec.Command("bluetoothctl", "default-agent")
+	output := exec.Command("bluetoothctl", "scan", "on")
+	_, err = output.CombinedOutput()
+	if(err != nil){
+		log.Error().Msgf("Error during scanning: %s", err)
+		return err
+	}
+
+	// then turn on bluetooth adapter
+	output = exec.Command("bluetoothctl", "power", "on")
+	_, err = output.CombinedOutput()
+	if(err != nil){
+		log.Error().Msgf("Error while turning on bluetooth adapter: %s", err)
+		return err
+	}
+
+	// activate the agent to handle pairing requests
+	output = exec.Command("bluetoothctl", "agent", "on")
+	_, err = output.CombinedOutput()
+	if(err != nil){
+		log.Error().Msgf("Error while activating agent: %s", err)
+		return err
+	}
+
+	// then set the current agent as the default for managing pairings
+	output = exec.Command("bluetoothctl", "default-agent")
+	_, err = output.CombinedOutput()
+	if(err != nil){
+		log.Error().Msgf("Error while setting default agent: %s", err)
+		return err
+	}
 	
 	// pair to the device, wait before connecting to ensure successful pairing
 	pairCmd := exec.Command("bluetoothctl", "pair", controllerAddress)
@@ -71,7 +117,6 @@ func run(service roverlib.Service, configuration *roverlib.ServiceConfiguration)
 	// sleep to ensure device is connected before accessing it
 	time.Sleep(2 * time.Second)
 
-
 	devices, err := evdev.ListInputDevices("/dev/input/event*")
 	if err != nil {
 		log.Fatal().Msgf("Failed to list input devices: %v", err)
@@ -92,18 +137,26 @@ func run(service roverlib.Service, configuration *roverlib.ServiceConfiguration)
 	var codeSteer uint16
 	var bluetoothName string
 
+	found := false
 	var controller *evdev.InputDevice
-
-	if(controllerType == "ps5"){
-		codeForward = 313
-		codeBackward = 312
-		codeCC = 307
-		codeEB = 304
-		codeSteer = 0
-		bluetoothName = "dualsense"
-
-	} else{
-		log.Fatal().Msgf("Unknown controller type or not supported: %s", controllerType)
+	for _, controller := range supportedControllers{
+		if(controllerType == controller.controllerCode){
+			codeForward = uint16(controller.codeForward)
+			codeBackward = uint16(controller.codeBackward)
+			codeCC = uint16(controller.codeCC)
+			codeEB = uint16(controller.codeEB)
+			codeSteer = uint16(controller.codeSteer)
+			bluetoothName = controller.bluetoothName
+			found = true
+			break
+		}	
+	}
+	if(!found){
+		log.Error().Msgf("Unknown controller type or not supported: %s", controllerType)
+		log.Info().Msgf("List of valid controllers: ")
+		for _, controller := range supportedControllers{
+			log.Info().Msgf("%s with \"controller-type\": %s",controller.name, controller.controllerCode)
+		}
 		return err
 	}
 

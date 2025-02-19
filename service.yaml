@@ -17,9 +17,9 @@ configuration:
   - name: controller-address
     type: string
     value: "58:10:31:A1:57:3C" 
-  - name: controller-type
+  - name: controller-type # 3 letter string to determine the type of controller, list of all supported controllers in controllers.go
     type: string
-    value: "ps5"
+    value: "ps5" 
   - name: max-speed
     type: number
     value: 0.3
